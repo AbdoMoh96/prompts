@@ -1,0 +1,190 @@
+# Responsive UI
+
+Make existing UI work across every viewport (320px phones up to wide desktops) by working *with* the codebase's existing styling system, not around it. Tables and data tables get special treatment because they are the most common source of horizontal overflow.
+
+Trigger phrases: "responsive", "make responsive", "make this mobile-friendly", "make data table responsive", "make section responsive", "fix layout on mobile/tablet", "table overflows", "horizontal scroll on mobile".
+
+---
+
+## Phase 1 — Detect the tech stack
+
+Before writing any CSS, identify what the project actually uses. Check `package.json`, config files, and imports.
+
+**Styling approach** (a project may combine several):
+- Plain CSS / CSS Modules (`*.module.css`)
+- Sass/SCSS or Less (`*.scss`, `*.sass`, `*.less`) — look for shared `_variables`, `_mixins`, `_breakpoints` partials
+- Tailwind CSS (`tailwind.config.*`, or `@import "tailwindcss"` / `@theme` in v4) — read the configured `screens`, `spacing`, `container` settings
+- CSS-in-JS (styled-components, Emotion, Stitches, vanilla-extract)
+- Utility/component frameworks: Bootstrap, Bulma, Foundation
+- Component libraries: MUI, Chakra, Ant Design, Mantine, PrimeReact/PrimeNG, Vuetify, Angular Material, shadcn/ui
+
+**Framework**: React, Next.js, Vue/Nuxt, Angular, Svelte, server templates (Blade, Razor, Django, ERB), plain HTML.
+
+**Table / data-grid library** (each has its own responsive API — use it before custom CSS):
+- Native `<table>`
+- TanStack Table, AG Grid, MUI DataGrid, Ant Design `Table` (`scroll={{ x }}`, `responsive` on columns), PrimeReact/PrimeNG DataTable (`responsiveLayout`, `scrollable`), DataTables.net (Responsive extension), Angular Material `mat-table`, Vuetify `v-data-table`, Handsontable
+
+**Existing design tokens**: breakpoints, spacing scale, root font size, container widths, z-index scale. **Reuse these — never invent new breakpoint values** unless none exist.
+
+Record findings in a short summary before changing anything.
+
+---
+
+## Phase 2 — Audit layout and positioning
+
+Scan the target area *and its ancestors* — overflow problems usually come from a parent.
+
+Check for:
+- **Layout model**: Flexbox, CSS Grid, floats, tables-for-layout, absolute positioning.
+- **Fixed dimensions**: hard-coded `width`, `min-width`, `height` in `px`; fixed `grid-template-columns`.
+- **Container chain**: `max-width`, horizontal `padding`/`margin`, nested wrappers that stack padding (card inside section inside container).
+- **Flex/grid min-size trap**: flex children default to `min-width: auto` and grid tracks `1fr` to `minmax(auto, 1fr)`, so wide content (tables, code, long words) blows out the layout. Fix with `min-width: 0` on the flex child or `minmax(0, 1fr)` on the track.
+- **Positioning**: `position: absolute/fixed/sticky` elements that assume a desktop width; sticky elements broken by an ancestor's `overflow`.
+- **Overflow sources**: long unbroken strings (URLs, emails, IDs, hashes), images/videos/iframes without `max-width: 100%`, `white-space: nowrap`, `100vw` widths (include the scrollbar → horizontal scroll).
+- **Viewport units**: `100vh` on mobile (address bar issue) → prefer `100dvh`/`100svh` with a `vh` fallback.
+- **Direction**: if the app supports RTL (Arabic, Hebrew, Persian), physical `left/right` properties will break — prefer logical properties.
+- **Interaction**: hover-only menus/tooltips, tap targets under ~44×44px.
+
+---
+
+## Phase 3 — Units and sizing rules
+
+| Use | For |
+|---|---|
+| `rem` | font sizes, spacing, padding, margins, gaps, breakpoints in media queries |
+| `em` | spacing that should scale with the component's own font size (button padding, icon size) |
+| `%`, `fr` | fluid widths and grid tracks |
+| `clamp(min, preferred, max)` | fluid typography and spacing, e.g. `font-size: clamp(1rem, 0.9rem + 0.5vw, 1.25rem)` |
+| `min()` / `max()` | caps, e.g. `width: min(100%, 75rem)` |
+| `ch` | readable text measure (`max-width: 65ch`), column widths for text cells |
+| `dvh` / `svh` / `lvh` | full-height mobile layouts |
+| `cqi` / container queries | components that must adapt to their container, not the viewport |
+| `px` | only for hairlines (`1px` borders), shadows, and values that must not scale |
+
+Rules:
+- Do not hard-code `px` widths on layout containers; use `max-width` + fluid width.
+- Media queries in `rem`/`em` so they respect user zoom and font settings.
+- Prefer intrinsic layouts (`flex-wrap`, `grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr))`) over many breakpoints.
+- Use **container queries** (`container-type: inline-size; @container (...)`) when a component appears in different-width slots (sidebar vs main).
+- Mobile-first: base styles for small screens, `min-width` queries to enhance — unless the codebase is consistently desktop-first; then match it.
+- Use **logical properties** (`margin-inline`, `padding-inline-start`, `inset-inline-end`, `text-align: start`) so layouts work in RTL.
+
+In Tailwind: use the configured breakpoint prefixes (`sm:`, `md:`, `lg:`…), arbitrary values only when the scale lacks one, and `@container` variants (v4 built-in, or the plugin in v3). In Sass: use the project's breakpoint mixins. In component libraries: use their breakpoint/`sx`/responsive-prop APIs.
+
+---
+
+## Phase 4 — Tables and data tables
+
+Goal: on every screen the user can read **all** columns and **all** cell content, without the whole page scrolling sideways.
+
+### 4.1 Always: contain horizontal overflow
+Wrap the table in a scroll container so only the table scrolls, never the page:
+
+```html
+<div class="table-scroll" role="region" aria-label="Orders table" tabindex="0">
+  <table>…</table>
+</div>
+```
+```css
+.table-scroll {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  max-width: 100%;
+}
+.table-scroll table {
+  width: 100%;
+  min-width: max-content; /* or a rem value sized to the columns */
+  border-collapse: collapse;
+}
+```
+- `role="region"` + `aria-label` + `tabindex="0"` makes the scroll area keyboard-scrollable and announced to screen readers.
+- Make sure every ancestor flex/grid item has `min-width: 0` (see Phase 2), otherwise the wrapper won't constrain.
+- Add a scroll-shadow / fade affordance on the overflowing edge so users know more columns exist.
+
+### 4.2 Reclaim horizontal space around tables
+On small screens, page/section/card padding steals width from the table.
+- Reduce `padding-inline` of the containing section/card at small breakpoints (e.g. `1.5rem` → `0.5rem`), or remove it for the table only.
+- Optionally let the table scroller bleed to the viewport edges: `margin-inline: calc(-1 * var(--container-padding));` with matching inner padding on the first/last cells.
+- Reduce cell padding on small screens (`padding: 0.5rem 0.75rem` → `0.375rem 0.5rem`) and slightly reduce font size via `clamp()` — never below ~0.8125rem for body data.
+- Collapse redundant wrappers (card inside card) on mobile.
+
+### 4.3 Wide columns and long cell content
+Pick per column, based on what the data is:
+- **Short, scannable values** (status, dates, amounts, IDs): `white-space: nowrap`; right-align numbers with `font-variant-numeric: tabular-nums`.
+- **Free text** (descriptions, notes, addresses): allow wrapping, cap width with `max-width: 20rem–30rem` or `ch` units; optionally `-webkit-line-clamp` with an expand/tooltip.
+- **Unbreakable strings** (URLs, emails, hashes, file paths): `overflow-wrap: anywhere;` (or `word-break: break-word`), or truncate with `text-overflow: ellipsis` + full value in a `title`/tooltip/copy button.
+- **Truncation needs**: `overflow: hidden; text-overflow: ellipsis; white-space: nowrap;` plus a fixed/max width — it does nothing on an auto-width cell. Use `table-layout: fixed` with explicit column widths when you need predictable truncation.
+- Never truncate content without a way to see the full value.
+
+### 4.4 Many columns — choose a strategy
+Decide by column count and how users use the data; state which one you chose.
+
+1. **Horizontal scroll with sticky key column** (default for data-heavy tables): `position: sticky; inset-inline-start: 0;` on the first column, with a background and z-index; sticky `thead th { position: sticky; top: 0; }` when the table also scrolls vertically. Note: sticky won't work if an ancestor between the cell and the scroller has `overflow: hidden`.
+2. **Column priority / hiding**: hide low-priority columns below a breakpoint and expose them via an expandable row detail or a column-visibility toggle. Never silently drop data with no way to reach it.
+3. **Stacked / card layout** for small screens (≤ ~5–6 columns, record-oriented data): each row becomes a card, each cell shows its header via `data-label`:
+   ```css
+   @media (max-width: 40rem) {
+     .table-stack thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+     .table-stack tr { display: block; margin-block-end: 0.75rem; }
+     .table-stack td { display: flex; justify-content: space-between; gap: 1rem; }
+     .table-stack td::before { content: attr(data-label); font-weight: 600; }
+   }
+   ```
+   Changing `display` on table elements can drop table semantics in some browsers; add `role="table"`, `role="row"`, `role="cell"`, `role="columnheader"` explicitly when using this pattern.
+4. **Library-native responsive mode**: AG Grid column `minWidth`/`flex` + auto-size, MUI DataGrid `columnVisibilityModel`, Ant Table `scroll={{ x: 'max-content' }}` and `responsive: ['md']`, PrimeNG `scrollable` / `responsiveLayout="stack"`, DataTables.net Responsive extension. Prefer these over hand-written CSS.
+
+### 4.5 Table chrome
+- Toolbars (search, filters, bulk actions, export): `flex-wrap: wrap`; collapse secondary actions into a menu on small screens.
+- Pagination: wrap or switch to compact (prev / page x of y / next) on small screens.
+- Row action buttons: keep reachable (sticky end column or overflow menu); tap targets ≥ 44×44px.
+- Tables inside modals, drawers, tabs, accordions, cards: the scroll wrapper must live *inside* the constrained container; modals need `max-width: min(100% - 2rem, …)`.
+- Nested tables: give each its own scroll container or flatten on mobile.
+- Virtualized grids: set column widths in config, not CSS; verify horizontal virtualization still renders sticky columns.
+- Empty, loading (skeleton) and error states must fit the narrow width too.
+- Print: `@media print` — remove scroll containers, allow wrapping, repeat `thead`.
+
+---
+
+## Phase 5 — General section/component scenarios
+- Multi-column layouts collapse to one column (`grid` with `auto-fit`/`minmax`, or breakpoint changes).
+- Navigation: collapse to a menu button; ensure keyboard and focus trapping in the mobile menu.
+- Sidebars: become off-canvas drawers or move below content.
+- Media: `img, video, iframe, svg { max-width: 100%; height: auto; }`; use `aspect-ratio` for embeds; `srcset`/`sizes` for images.
+- Forms: inputs full-width on mobile, labels above fields, `font-size ≥ 1rem` on inputs (prevents iOS zoom), correct `inputmode`/`type`.
+- Typography: fluid headings with `clamp()`; `overflow-wrap: break-word` on long headings.
+- Fixed/sticky headers and footers: account for `env(safe-area-inset-*)` on notched devices.
+- Hover-dependent UI: provide tap/focus alternatives; use `@media (hover: hover)` for hover-only styling.
+- Respect `prefers-reduced-motion` for any added transitions.
+
+---
+
+## Phase 6 — Implement
+- Change the smallest scope that fixes the problem; follow existing naming, file structure and conventions.
+- Put shared fixes (e.g. a `.table-scroll` utility, a breakpoint mixin) where the project keeps shared styles, and reuse them across all affected tables.
+- Don't break the desktop layout — responsive changes should be additive.
+- Don't add a new dependency unless the user agrees.
+
+---
+
+## Phase 7 — Verify
+Test at minimum: **320, 375, 414, 768, 1024, 1280, 1440, 1920px**, plus landscape phone and **200% browser zoom**.
+
+Checklist:
+- [ ] No page-level horizontal scroll: `document.documentElement.scrollWidth <= window.innerWidth` at every width.
+- [ ] Every table column and cell value is reachable (scroll, expand, tooltip or stacked view).
+- [ ] Sticky headers/columns stay aligned and have opaque backgrounds.
+- [ ] Side padding around tables is reduced on small screens.
+- [ ] Text is readable (no body text below ~0.8125rem), tap targets ≥ 44px.
+- [ ] Works in RTL if the app supports it.
+- [ ] Keyboard: scroll regions focusable, focus visible, no traps.
+- [ ] No layout shift or regression on desktop.
+
+If a browser tool is available, check the widths above visually and report any issue found.
+
+---
+
+## Output to the user
+1. Detected stack and table library (one or two lines).
+2. Root causes found (e.g. "flex child missing `min-width: 0`", "fixed 1200px table width").
+3. Changes made, per file, and the table strategy chosen for each table and why.
+4. Anything left for the user to decide (e.g. which columns are low-priority).
